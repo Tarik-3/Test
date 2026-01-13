@@ -1,0 +1,3 @@
+week,service,failure,success,total_changes,failure_rate
+2026-01-12/2026-01-18,backend,0,1,1,0.0
+2026-01-12/2026-01-18,frontend,1,0,1,100.0
