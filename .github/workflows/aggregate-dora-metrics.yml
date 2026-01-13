@@ -1,0 +1,56 @@
+name: Aggregate DORA Metrics
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Run daily at midnight
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  aggregate-metrics:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install requests pandas python-dateutil
+      
+      - name: Download workflow artifacts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/download_metrics.py
+      
+      - name: Aggregate DORA Metrics
+        run: |
+          python scripts/aggregate_dora_metrics.py
+      
+      - name: Upload aggregated metrics
+        uses: actions/upload-artifact@v4
+        with:
+          name: dora-metrics-aggregated-${{ github.run_number }}
+          path: |
+            metrics/aggregated/
+            metrics/powerbi/
+          retention-days: 365
+      
+      - name: Commit metrics to repository
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          mkdir -p metrics/historical
+          cp metrics/powerbi/*.csv metrics/historical/
+          
+          git add metrics/historical/
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update DORA metrics - $(date +%Y-%m-%d)" && git push)

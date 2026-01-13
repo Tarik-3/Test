@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+target/
+build/
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.iws
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Metrics
+metrics/raw/
+metrics/aggregated/
+metrics/powerbi/*.csv
+
+# Test coverage
+coverage/
+
+# Build artifacts
+*.jar
+*.war
+*.class
