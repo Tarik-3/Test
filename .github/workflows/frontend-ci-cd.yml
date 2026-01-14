@@ -11,6 +11,7 @@ on:
   push:
     branches: [feature/pipeline]
 
+
 env:
   NODE_VERSION: "20"
   IMAGE_NAME: frontend
@@ -165,3 +166,4 @@ jobs:
         with:
           name: dora-events-frontend
           path: dora_events.csv
+
