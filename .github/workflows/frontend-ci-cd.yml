@@ -1,163 +1,167 @@
-name: Frontend CI/CD with DORA Metrics
+name: frontend-ci-cd
 
 on:
-  push:
-    branches: [ main, develop ]
-    paths:
-      - 'frontend/**'
-      - '.github/workflows/frontend-ci-cd.yml'
   pull_request:
-    branches: [ main, develop ]
     paths:
-      - 'frontend/**'
+      - "src/**"
+      - "package.json"
+      - "package-lock.json"
+      - "vite.config.ts"
+      - "tsconfig*.json"
+  push:
+    branches: [feature/pipeline]
 
 env:
+  NODE_VERSION: "20"
+  IMAGE_NAME: frontend
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}/frontend
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}
+  ECS_SERVICE: ${{ secrets.ECS_SERVICE_FRONTEND }}
+  ECS_TASK_DEFINITION: ${{ secrets.ECS_TASK_DEFINITION_FRONTEND }}
+  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_FRONTEND }}
 
 jobs:
-  build-and-test:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Test (if present)
+        run: npm run test --if-present
+
+      - name: Upload dist
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vite-dist
+          path: dist
+
+  deploy:
+    needs: containerize
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feature/pipeline'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+  containerize:
+    needs: build-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feature/pipeline'
+    outputs:
+      image_uri: ${{ steps.build-image.outputs.image_uri }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Fetch all history for DORA metrics
-      
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
-      
-      - name: Install dependencies
-        working-directory: ./frontend
-        run: npm ci
-      
-      - name: Run tests
-        working-directory: ./frontend
-        run: npm test -- --watchAll=false --coverage
-      
-      - name: Build application
-        working-directory: ./frontend
-        run: npm run build
-      
-      - name: Log in to Container Registry
-        if: github.event_name != 'pull_request'
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix={{branch}}-
-      
-      - name: Build and push Docker image
-        if: github.event_name != 'pull_request'
-        uses: docker/build-push-action@v5
-        with:
-          context: ./frontend
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-      
-      - name: Calculate DORA Metrics - Deployment Frequency
-        if: github.event_name != 'pull_request'
-        run: |
-          echo "DEPLOYMENT_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
-          echo "DEPLOYMENT_VERSION=${{ github.sha }}" >> $GITHUB_ENV
-          echo "SERVICE_NAME=frontend" >> $GITHUB_ENV
-      
-      - name: Calculate Lead Time for Changes
-        if: github.event_name != 'pull_request'
-        run: |
-          # Get commit timestamp
-          COMMIT_TIME=$(git show -s --format=%cI ${{ github.sha }})
-          DEPLOY_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          
-          echo "COMMIT_TIMESTAMP=$COMMIT_TIME" >> $GITHUB_ENV
-          echo "DEPLOY_TIMESTAMP=$DEPLOY_TIME" >> $GITHUB_ENV
-      
-      - name: Send DORA Metrics to Storage
-        if: github.event_name != 'pull_request'
-        run: |
-          # Create metrics JSON
-          cat > dora-metrics.json << EOF
-          {
-            "timestamp": "${{ env.DEPLOYMENT_TIMESTAMP }}",
-            "service": "${{ env.SERVICE_NAME }}",
-            "deployment_frequency": {
-              "deployment_id": "${{ github.run_id }}",
-              "deployment_time": "${{ env.DEPLOYMENT_TIMESTAMP }}",
-              "branch": "${{ github.ref_name }}",
-              "commit_sha": "${{ github.sha }}"
-            },
-            "lead_time_for_changes": {
-              "commit_timestamp": "${{ env.COMMIT_TIMESTAMP }}",
-              "deploy_timestamp": "${{ env.DEPLOY_TIMESTAMP }}",
-              "commit_sha": "${{ github.sha }}"
-            },
-            "change_failure_rate": {
-              "status": "success",
-              "workflow_run_id": "${{ github.run_id }}"
-            }
-          }
-          EOF
-          
-          # Store metrics (upload as artifact for later processing)
-          mkdir -p metrics
-          cp dora-metrics.json metrics/frontend-${{ github.run_id }}.json
-      
-      - name: Upload DORA Metrics Artifact
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
-        with:
-          name: dora-metrics-frontend-${{ github.run_id }}
-          path: metrics/
-          retention-days: 90
 
-  failure-tracking:
-    runs-on: ubuntu-latest
-    if: failure()
-    needs: build-and-test
-    
-    steps:
-      - name: Record Failure Metric
+      - name: Build Docker image
+        id: build-image
         run: |
-          cat > failure-metric.json << EOF
-          {
-            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "service": "frontend",
-            "change_failure_rate": {
-              "status": "failure",
-              "workflow_run_id": "${{ github.run_id }}",
-              "commit_sha": "${{ github.sha }}",
-              "branch": "${{ github.ref_name }}"
-            }
-          }
-          EOF
-          
-          mkdir -p metrics
-          cp failure-metric.json metrics/frontend-failure-${{ github.run_id }}.json
-      
-      - name: Upload Failure Metric
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_URI=${{ env.REGISTRY }}/$OWNER/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker build -t $IMAGE_URI .
+          echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
+
+      - name: Push Docker image to GHCR
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          docker push ${{ env.REGISTRY }}/$OWNER/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Tag and push image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          docker pull ${{ env.REGISTRY }}/$OWNER/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker tag ${{ env.REGISTRY }}/$OWNER/${{ env.IMAGE_NAME }}:${{ github.sha }} $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          docker tag ${{ env.REGISTRY }}/$OWNER/${{ env.IMAGE_NAME }}:${{ github.sha }} $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:latest
+          docker push $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          docker push $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:latest
+
+      - name: Download task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${{ env.ECS_TASK_DEFINITION }} \
+            --query taskDefinition > task-definition.json
+
+      - name: Update task definition with new image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.IMAGE_NAME }}
+          image: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+
+      - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+      - name: Init DORA CSV
+        if: always()
+        run: echo "service,event,status,commit,timestamp" > dora_events.csv
+
+      - name: Record DORA event (deploy success)
+        if: success()
+        run: printf "frontend,deploy,success,${{ github.sha }},$(date -Iseconds)\n" >> dora_events.csv
+
+      - name: Record DORA event (deploy fail)
+        if: failure()
+        run: printf "frontend,deploy,fail,${{ github.sha }},$(date -Iseconds)\n" >> dora_events.csv
+
+      - name: Upload DORA CSV
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dora-metrics-frontend-failure-${{ github.run_id }}
-          path: metrics/
-          retention-days: 90
+          name: dora-events-frontend
+          path: dora_events.csv
