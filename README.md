@@ -46,7 +46,7 @@ git push -u origin main
 
 Import the generated CSV files into Power BI to visualize:
 - 📊 Deployment frequency trends
-- ⏱️ Lead time for changes
+- ⏱️ Lead time for Changes
 - 🔴 Change failure rates
 - 📈 DORA performance classification
 
@@ -66,3 +66,4 @@ See [docs/POWERBI_INTEGRATION.md](docs/POWERBI_INTEGRATION.md) for Power BI setu
 ## License
 
 [Your License]
+
