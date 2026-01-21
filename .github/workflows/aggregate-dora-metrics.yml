@@ -1,8 +1,6 @@
 name: Aggregate DORA Metrics
 
 on:
-  schedule:
-    - cron: '0 0 * * *'  # Run daily at midnight
   workflow_dispatch:  # Allow manual trigger
 
 jobs:
@@ -54,3 +52,4 @@ jobs:
           
           git add metrics/historical/
           git diff --quiet && git diff --staged --quiet || (git commit -m "Update DORA metrics - $(date +%Y-%m-%d)" && git push)
+
